@@ -68,9 +68,16 @@ export default function Drawer({ id, mtime, colors, byId, prs, onClose, onSelect
             </div>
           )}
           {s.artifacts.length > 0 && (
-            <div className="mt-2 flex flex-wrap gap-1.5">
-              {s.artifacts.map(u => <PRBadge key={u} state="unknown" href={u} title={u}>artifact · {u.split('/').pop()?.slice(0, 8)}</PRBadge>)}
-            </div>
+            <ul className="mt-2 space-y-1">
+              {s.artifacts.map(a => (
+                <li key={a.url} className="text-xs">
+                  <a href={a.url} target="_blank" rel="noopener noreferrer" title={a.url} className="font-medium text-blue-600 hover:underline dark:text-blue-400">
+                    ↗ {a.title || a.url.split('/').pop()?.slice(0, 8)}
+                  </a>
+                  {a.description && <span className="text-zinc-500"> · {a.description}</span>}
+                </li>
+              ))}
+            </ul>
           )}
           <div className="mt-3 flex items-center gap-2 rounded-lg bg-zinc-100 p-2 dark:bg-zinc-900">
             <code className="min-w-0 flex-1 truncate text-[11px]" title={cmd}>{cmd}</code>

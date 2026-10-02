@@ -28,7 +28,7 @@ def write_fixture(root):
          "message": {"content": [{"type": "text", "text": "Looking at the Widget for ABC-123, see PR 4242"},
                                  {"type": "tool_use", "name": "Edit", "input": {"file_path": "/a/b.py"}},
                                  {"type": "tool_use", "name": "Read", "input": {"file_path": "/a/c.py"}},
-                                 {"type": "tool_use", "id": "t1", "name": "Artifact", "input": {"file_path": "/a/r.html"}},
+                                 {"type": "tool_use", "id": "t1", "name": "Artifact", "input": {"file_path": "/a/rate-limit-report.html", "description": "Quota findings"}},
                                  {"type": "tool_use", "id": "t2", "name": "Artifact", "input": {"action": "list"}}]}},
         {"type": "user", "timestamp": "2026-01-01T10:02:00Z",
          "message": {"content": [{"type": "tool_result", "content": "secret tool output"}]}},
@@ -63,7 +63,9 @@ def test_all():
         assert s["cost"] == 1.5 and s["added"] == 10 and s["removed"] == 2
         assert s["prs"] == [{"repo": "acme/api", "number": 7, "url": "https://github.com/acme/api/pull/7"}]
         assert s["files"] == ["/a/b.py"]
-        assert s["artifacts"] == ["https://claude.ai/code/artifact/abc-1"]  # published only, not listed
+        assert s["artifacts"] == [{"url": "https://claude.ai/code/artifact/abc-1", "title": "rate limit report",
+                                   "description": "Quota findings"}]  # published only, not listed
+        assert "rate limit report quota findings" in s["text"]  # artifacts are searchable by name
         assert s["file_keys"] == ["/a/b.py"]  # not inside a git checkout -> absolute path
         assert s["subagents"] == 1
         assert "widget" in s["text"] and "secret tool output" not in s["text"]
@@ -223,6 +225,7 @@ def test_summaries():
             sm.schedule()
             wait_for(lambda: sm.get(SID) == "Fixed the login bug.")
             assert "<transcript>" in (root / "in").read_text()
+            assert "- rate limit report: Quota findings" in (root / "in").read_text()  # summary can name the artifact
             assert json.loads(cache.read_text())[SID]["summary"] == "Fixed the login bug."
             v = sm.version
             sm.schedule()
