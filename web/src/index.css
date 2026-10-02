@@ -1,0 +1,22 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+html, body, #root { height: 100%; }
+body { @apply bg-white text-zinc-900 antialiased dark:bg-zinc-950 dark:text-zinc-100; }
+
+/* assistant markdown */
+.md :where(p, ul, ol, pre, table) { margin: .4em 0; }
+.md ul { list-style: disc; padding-left: 1.2em; }
+.md ol { list-style: decimal; padding-left: 1.2em; }
+.md :where(h1, h2, h3, h4) { font-weight: 600; margin: .6em 0 .3em; }
+.md a { text-decoration: underline; }
+.md pre { overflow-x: auto; padding: .6em; border-radius: .4em; background: rgb(0 0 0 / .05); font-size: 12px; }
+.md :not(pre) > code { background: rgb(0 0 0 / .05); padding: 0 .25em; border-radius: .25em; font-size: .9em; }
+.md table { font-size: 12px; border-collapse: collapse; }
+.md :where(td, th) { border: 1px solid rgb(128 128 128 / .3); padding: 2px 6px; }
+@media (prefers-color-scheme: dark) {
+  .md pre, .md :not(pre) > code { background: rgb(255 255 255 / .07); }
+}
