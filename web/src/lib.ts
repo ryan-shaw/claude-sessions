@@ -180,3 +180,39 @@ export const linkCitations = (md: string, byId: Map<string, Session>) =>
     const s = byId.get(id)
     return s ? `[${s.title.replace(/[[\]]/g, '')}](#s:${id})` : m
   })
+
+export type View = 'graph' | 'timeline' | 'digest'
+export type UrlState = { view: View; selected: string | null; query: string; filters: Filters }
+export const NO_FILTERS: Filters = { project: '', pr: '', file: null, range: null }
+const PR_FILTERS = ['any', 'open', 'merged', 'unmerged']
+
+// view, selection, search and filters live in the URL hash so reloads and bookmarks keep your place
+export function toHash({ view, selected, query, filters: f }: UrlState): string {
+  const p = new URLSearchParams()
+  if (view !== 'graph') p.set('view', view)
+  if (selected) p.set('s', selected)
+  if (query) p.set('q', query)
+  if (f.project) p.set('project', f.project)
+  if (f.pr) p.set('pr', f.pr)
+  if (f.file) p.set('file', f.file)
+  if (f.range) p.set('range', f.range.join('..'))
+  return p.toString()
+}
+
+export function fromHash(hash: string): UrlState {
+  const p = new URLSearchParams(hash.replace(/^#/, ''))
+  const view = p.get('view'), pr = p.get('pr') ?? '', range = p.get('range')?.split('..')
+  return {
+    view: view === 'timeline' || view === 'digest' ? view : 'graph',
+    selected: p.get('s'), query: p.get('q') ?? '',
+    filters: { project: p.get('project') ?? '', pr: (PR_FILTERS.includes(pr) ? pr : '') as PRFilter, file: p.get('file'),
+      range: range?.length === 2 ? [range[0], range[1]] : null },
+  }
+}
+
+// next/previous id in the list for ↑/↓; from no (or a filtered-out) selection, start at the near end
+export function step(ids: string[], cur: string | null, d: 1 | -1): string | null {
+  const i = cur ? ids.indexOf(cur) : -1
+  if (i < 0) return ids[d > 0 ? 0 : ids.length - 1] ?? null
+  return ids[Math.min(ids.length - 1, Math.max(0, i + d))]
+}

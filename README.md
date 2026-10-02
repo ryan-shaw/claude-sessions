@@ -28,6 +28,8 @@ Requirements:
 
 ### Finding sessions
 - **Search:** full text across every session, with matching snippets. ⌘K jumps to the search box.
+- **Keyboard:** ↑/↓ (or j/k) move through the list and open each session; Esc closes it.
+- **Links:** the view, selected session, search and filters are kept in the URL, so reloads keep your place and you can bookmark a session.
 - **Filters:**
   - project
   - PR state: has PR / open / merged / not merged

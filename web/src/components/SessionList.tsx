@@ -1,20 +1,32 @@
+import { useEffect, useRef } from 'react'
 import type { PRInfo, Session } from '../types'
 import { ago, prStates, prSummaryState } from '../lib'
 import { PRBadge } from './PRBadge'
 
 type Props = {
   sessions: Session[]; colors: Record<string, string>; hits: Map<string, string> | null; selected: string | null
-  live: Set<string>; prs: Record<string, PRInfo>; onSelect: (id: string) => void
+  live: Set<string>; prs: Record<string, PRInfo>; onSelect: (id: string) => void; onClear: () => void
 }
 
-export default function SessionList({ sessions, colors, hits, selected, live, prs, onSelect }: Props) {
+export default function SessionList({ sessions, colors, hits, selected, live, prs, onSelect, onClear }: Props) {
+  const ref = useRef<HTMLElement>(null)
+  // selection can come from the graph, timeline or keys; bring it into view (only on change, so polling doesn't fight scrolling)
+  useEffect(() => {
+    if (selected) ref.current?.querySelector(`[data-id="${CSS.escape(selected)}"]`)?.scrollIntoView({ block: 'nearest' })
+  }, [selected])
   return (
-    <aside className="w-80 shrink-0 overflow-y-auto border-r border-zinc-200 p-2 dark:border-zinc-800">
+    <aside ref={ref} className="w-80 shrink-0 overflow-y-auto border-r border-zinc-200 p-2 dark:border-zinc-800">
       <div className="px-2 pb-1 text-xs text-zinc-500">{sessions.length} shown</div>
+      {!sessions.length && (
+        <div className="px-2 py-6 text-center text-sm text-zinc-500">
+          No sessions match.
+          <button onClick={onClear} className="mt-2 block w-full rounded-md border border-zinc-300 px-2.5 py-1 text-xs font-medium dark:border-zinc-700">Clear filters</button>
+        </div>
+      )}
       {sessions.map(s => {
         const st = prSummaryState(prStates(s, prs))
         return (
-          <button key={s.id} onClick={() => onSelect(s.id)}
+          <button key={s.id} data-id={s.id} onClick={() => onSelect(s.id)}
             className={`mb-0.5 block w-full rounded-lg px-3 py-2 text-left transition-colors ${s.id === selected ? 'bg-zinc-100 dark:bg-zinc-800' : 'hover:bg-zinc-50 dark:hover:bg-zinc-900'}`}>
             <div className="flex items-start gap-2">
               <span className="mt-1.5 size-2 shrink-0 rounded-full" style={{ background: colors[s.project] }} />

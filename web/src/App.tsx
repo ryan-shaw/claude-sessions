@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { PRInfo, Session } from './types'
-import { buildEdges, isLive, matches, projectColors, type Filters, type PRFilter } from './lib'
+import { NO_FILTERS, buildEdges, fromHash, isLive, matches, projectColors, step, toHash, type Filters, type PRFilter, type View } from './lib'
 import ActivityStrip from './components/ActivityStrip'
 import SessionList from './components/SessionList'
 import GraphView from './components/GraphView'
@@ -11,17 +11,18 @@ import AskPanel from './components/AskPanel'
 
 const control = 'rounded-lg border border-zinc-200 bg-zinc-50 px-2.5 py-1.5 text-sm outline-none focus:border-zinc-400 dark:border-zinc-800 dark:bg-zinc-900 dark:focus:border-zinc-600'
 const POLL_MS = 3000
+const init = fromHash(location.hash)
 
 export default function App() {
   const [sessions, setSessions] = useState<Session[]>([])
   const [prs, setPrs] = useState<Record<string, PRInfo>>({})
   const [now, setNow] = useState(() => Date.now())
   const [error, setError] = useState('')
-  const [query, setQuery] = useState('')
+  const [query, setQuery] = useState(init.query)
   const [hits, setHits] = useState<Map<string, string> | null>(null)
-  const [filters, setFilters] = useState<Filters>({ project: '', pr: '', file: null, range: null })
-  const [view, setView] = useState<'graph' | 'timeline' | 'digest'>('graph')
-  const [selected, setSelected] = useState<string | null>(null)
+  const [filters, setFilters] = useState<Filters>(init.filters)
+  const [view, setView] = useState<View>(init.view)
+  const [selected, setSelected] = useState<string | null>(init.selected)
   const [mode, setMode] = useState<'search' | 'ask'>('search')
   const [asked, setAsked] = useState<{ q: string; n: number } | null>(null) // n: each submit re-asks, even the same text
   const searchRef = useRef<HTMLInputElement>(null)
@@ -60,15 +61,6 @@ export default function App() {
     return () => { clearTimeout(t); ctl.abort() }
   }, [query, mode])
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'k') { e.preventDefault(); searchRef.current?.focus() }
-      if (e.key === 'Escape') setSelected(null)
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [])
-
   const colors = useMemo(() => projectColors(sessions), [sessions])
   const edges = useMemo(() => buildEdges(sessions), [sessions])
   const projects = Object.keys(colors).sort()
@@ -77,6 +69,23 @@ export default function App() {
   const visible = useMemo(() => sessions.filter(s => matches(s, filters, hits, prs)), [sessions, filters, hits, prs])
   const visibleIds = useMemo(() => new Set(visible.map(s => s.id)), [visible])
   const totalCost = sessions.reduce((a, s) => a + s.cost, 0)
+
+  useEffect(() => {
+    history.replaceState(null, '', '#' + toHash({ view, selected, query: mode === 'search' ? query : '', filters }))
+  }, [view, selected, query, mode, filters])
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') { e.preventDefault(); searchRef.current?.focus() }
+      if (e.key === 'Escape') setSelected(null)
+      const typing = e.target instanceof HTMLElement && e.target.closest('input, textarea, select, [contenteditable]')
+      if (typing || e.metaKey || e.ctrlKey || e.altKey) return
+      const d = e.key === 'ArrowDown' || e.key === 'j' ? 1 : e.key === 'ArrowUp' || e.key === 'k' ? -1 : 0
+      if (d) { e.preventDefault(); setSelected(cur => step(visible.map(s => s.id), cur, d)) }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [visible])
 
   return (
     <div className="flex h-full flex-col">
@@ -104,7 +113,7 @@ export default function App() {
           {projects.map(p => <option key={p}>{p}</option>)}
         </select>
         <select value={filters.pr} onChange={e => setFilters(f => ({ ...f, pr: e.target.value as PRFilter }))} className={control}>
-          <option value="">All sessions</option>
+          <option value="">Any PR status</option>
           <option value="any">Has PR</option>
           <option value="open">PR open</option>
           <option value="merged">PR merged</option>
@@ -126,7 +135,8 @@ export default function App() {
       <ActivityStrip sessions={sessions} colors={colors} range={filters.range} onRange={range => setFilters(f => ({ ...f, range }))} />
       {error && <p className="px-4 py-1 text-xs text-red-500">Can't reach the server: {error}</p>}
       <main className="flex min-h-0 flex-1">
-        <SessionList sessions={visible} colors={colors} hits={hits} selected={selected} live={live} prs={prs} onSelect={setSelected} />
+        <SessionList sessions={visible} colors={colors} hits={hits} selected={selected} live={live} prs={prs} onSelect={setSelected}
+          onClear={() => { setFilters(NO_FILTERS); setQuery('') }} />
         <div className="relative min-w-0 flex-1">
           {view === 'graph'
             ? <GraphView sessions={sessions} edges={edges} colors={colors} visibleIds={visibleIds} selected={selected} live={live} prs={prs} onSelect={setSelected} />

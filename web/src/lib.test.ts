@@ -1,5 +1,5 @@
 import { expect, test } from 'vitest'
-import { FILE_CAP, LIVE_SECS, buildEdges, buildFolderTree, esc, graphSig, inRange, isLive, linkCitations, weekRange, reuseNodes, laneOrder, matches, neighbours, prSummaryState, projectColors, resumeCommand, type Filters } from './lib'
+import { FILE_CAP, LIVE_SECS, buildEdges, buildFolderTree, esc, graphSig, inRange, isLive, linkCitations, weekRange, reuseNodes, laneOrder, matches, neighbours, prSummaryState, projectColors, resumeCommand, fromHash, step, toHash, NO_FILTERS, type Filters } from './lib'
 import type { Session } from './types'
 
 const mk = (id: string, o: Partial<Session> = {}): Session => ({
@@ -163,4 +163,22 @@ test('inRange compares ISO start times to the half-open range', () => {
 test('linkCitations turns [[id]] into session links and leaves unknown ids alone', () => {
   const byId = new Map([['abc-123', mk('abc-123', { title: 'Fix [login]' })]])
   expect(linkCitations('See [[abc-123]] and [[nope]].', byId)).toBe('See [Fix login](#s:abc-123) and [[nope]].')
+})
+
+test('URL hash round-trips state and ignores junk', () => {
+  const st = { view: 'timeline' as const, selected: 'abc', query: 'redis cache', filters: { project: 'acme/api', pr: 'open' as const, file: 'api:a b.py', range: ['2026-01-01', '2026-01-07'] as [string, string] } }
+  expect(fromHash('#' + toHash(st))).toEqual(st)
+  expect(toHash({ view: 'graph', selected: null, query: '', filters: NO_FILTERS })).toBe('')
+  expect(fromHash('#view=evil&pr=nope&range=x')).toEqual({ view: 'graph', selected: null, query: '', filters: NO_FILTERS })
+})
+
+test('step moves through the list and clamps at the ends', () => {
+  const ids = ['a', 'b', 'c']
+  expect(step(ids, null, 1)).toBe('a')
+  expect(step(ids, null, -1)).toBe('c')
+  expect(step(ids, 'gone', 1)).toBe('a')
+  expect(step(ids, 'b', 1)).toBe('c')
+  expect(step(ids, 'c', 1)).toBe('c')
+  expect(step(ids, 'a', -1)).toBe('a')
+  expect(step([], null, 1)).toBe(null)
 })
