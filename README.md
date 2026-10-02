@@ -10,15 +10,15 @@ A local tool for browsing, searching and asking questions of every Claude Code s
 
 ```sh
 cd web && npm install && npm run build && cd ..   # first time, or after UI changes
-python3 sessions.py                               # http://127.0.0.1:8765
+uv run sessions.py                                # http://127.0.0.1:8765
 ```
 
 Flags:
 - `--port 8765`
-- `--no-llm`: turns off summaries, digest and ask, so the app makes no `claude -p` calls
+- `--no-llm` (e.g. `uv run sessions.py --no-llm`): turns off summaries, digest and ask, so the app makes no `claude -p` calls
 
 Requirements:
-- **Required:** Python 3.12+ (stdlib only) and Node 20+ (for building the UI).
+- **Required:** [uv](https://docs.astral.sh/uv/) (it installs Python 3.12+ if needed; there are no Python dependencies) and Node 20+ (for building the UI).
 - **Optional:**
   - `gh` (logged in) for PR status
   - iTerm for "Open in iTerm"
@@ -74,7 +74,7 @@ These use headless `claude -p` with your existing Claude login; no API key is ne
 `mcp_server.py` is a read-only stdio server. It makes no paid calls and doesn't need the web app running.
 
 ```sh
-claude mcp add --scope user claude-sessions -- python3 "$PWD/mcp_server.py"
+claude mcp add --scope user claude-sessions -- uv run --quiet --directory "$PWD" mcp_server.py
 claude mcp get claude-sessions    # should show ✔ Connected
 ```
 
@@ -121,14 +121,14 @@ The screenshot above uses generated demo data.
 ## Development
 
 ```sh
-python3 sessions.py                 # API on :8765
+uv run sessions.py                  # API on :8765
 cd web && npm run dev               # UI with hot reload; Vite proxies /api
 ```
 
 Tests (fake `gh`, `osascript` and `claude` programs on `PATH`, so nothing real gets called):
 
 ```sh
-python3 test_sessions.py            # server, parser, PR status, iTerm, summaries, ask/digest, MCP
+uv run test_sessions.py             # server, parser, PR status, iTerm, summaries, ask/digest, MCP
 cd web && npm test                  # graph/timeline/filter logic, markdown safety
 ```
 
