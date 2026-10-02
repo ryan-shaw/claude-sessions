@@ -48,6 +48,7 @@ Requirements:
 ### Session details
 - **Overview:** AI summary, folder, branches, dates, cost and lines changed.
 - **PRs:** badges coloured by live GitHub status (open / merged / closed).
+- **Artifacts:** links to any claude.ai artifacts the session published; the list shows an "artifact ×N" badge.
 - **Files and related sessions:** edited files are keyed `repo:path`, so a worktree and its main checkout match. Related sessions are found by content similarity.
 - **Resume:** a copyable `cd … && claude --resume <id>` command, plus **Open in iTerm**.
 - **Transcript:**
@@ -86,6 +87,8 @@ claude mcp get claude-sessions    # should show ✔ Connected
 | `recent_sessions(days=7, project?)` | Recent activity, optionally for one project and its subfolders |
 | `session_digest(week_offset=0)` | One week's sessions grouped by top-level folder |
 
+Every session result includes its PR URLs and the claude.ai artifact URLs it published.
+
 Summaries come from the web app's cache, so run `sessions.py` at least once to fill it. The server supports both the 2026-07-28 MCP protocol and older clients.
 
 ## How it works
@@ -94,6 +97,7 @@ Summaries come from the web app's cache, so run `sessions.py` at least once to f
   - indexes the session JSONL files, cached by modification time
   - TF-IDF for related sessions and Ask retrieval
   - looks up PR status with `gh` in the background, cached for 10 minutes
+  - finds published artifacts from `Artifact` tool calls (publishes only, not read/list) and the claude.ai URLs in their results
   - runs the summary worker
   - serves the JSON API and the built UI
 - **`web/`:** React, Vite, Tailwind, `react-force-graph-2d` and `react-markdown`.

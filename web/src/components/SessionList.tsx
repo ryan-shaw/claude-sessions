@@ -22,7 +22,7 @@ export default function SessionList({ sessions, colors, hits, selected, live, pr
                 <div className="line-clamp-2 text-sm leading-snug font-medium">{s.title}</div>
                 {s.summary && <div className="mt-0.5 line-clamp-2 text-xs text-zinc-600 dark:text-zinc-400">{s.summary}</div>}
                 <div className="mt-0.5 truncate text-xs text-zinc-500">{s.project} · {ago(s.end)} · ${s.cost.toFixed(2)}</div>
-                {(live.has(s.id) || st) && (
+                {(live.has(s.id) || st || s.artifacts.length > 0) && (
                   <div className="mt-1 flex flex-wrap items-center gap-1.5">
                     {live.has(s.id) && (
                       <span className="flex items-center gap-1 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
@@ -30,6 +30,7 @@ export default function SessionList({ sessions, colors, hits, selected, live, pr
                       </span>
                     )}
                     {st && <PRBadge state={st}>PR ×{s.prs.length} · {st}</PRBadge>}
+                    {s.artifacts.length > 0 && <PRBadge state="unknown">artifact ×{s.artifacts.length}</PRBadge>}
                   </div>
                 )}
                 {hits?.get(s.id) && <div className="mt-1 line-clamp-2 text-xs text-zinc-500">…{hits.get(s.id)}…</div>}

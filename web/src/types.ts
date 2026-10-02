@@ -3,7 +3,7 @@ export type Session = {
   id: string; cwd: string; project: string; branches: string[]; title: string
   start: string | null; end: string | null; messages: number
   cost: number; added: number; removed: number
-  prs: PR[]; files: string[]; subagents: number
+  prs: PR[]; artifacts: string[]; files: string[]; subagents: number
   mtime: number; file_keys: string[]; related: { id: string; score: number }[]
   summary?: string | null
 }

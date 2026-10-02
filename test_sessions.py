@@ -27,9 +27,14 @@ def write_fixture(root):
         {"type": "assistant", "gitBranch": "main", "timestamp": "2026-01-01T10:01:00Z",
          "message": {"content": [{"type": "text", "text": "Looking at the Widget"},
                                  {"type": "tool_use", "name": "Edit", "input": {"file_path": "/a/b.py"}},
-                                 {"type": "tool_use", "name": "Read", "input": {"file_path": "/a/c.py"}}]}},
+                                 {"type": "tool_use", "name": "Read", "input": {"file_path": "/a/c.py"}},
+                                 {"type": "tool_use", "id": "t1", "name": "Artifact", "input": {"file_path": "/a/r.html"}},
+                                 {"type": "tool_use", "id": "t2", "name": "Artifact", "input": {"action": "list"}}]}},
         {"type": "user", "timestamp": "2026-01-01T10:02:00Z",
          "message": {"content": [{"type": "tool_result", "content": "secret tool output"}]}},
+        {"type": "user", "timestamp": "2026-01-01T10:02:20Z",
+         "message": {"content": [{"type": "tool_result", "tool_use_id": "t1", "content": [{"type": "text", "text": "Published https://claude.ai/code/artifact/abc-1"}]},
+                                 {"type": "tool_result", "tool_use_id": "t2", "content": "https://claude.ai/code/artifact/other-2"}]}},
         {"type": "pr-link", "prNumber": 7, "prUrl": "https://github.com/acme/api/pull/7", "prRepository": "acme/api", "timestamp": "2026-01-01T10:03:00Z"},
         {"type": "cost-state", "totalCostUSD": 1.5, "totalLinesAdded": 10, "totalLinesRemoved": 2},
     ]
@@ -58,6 +63,7 @@ def test_all():
         assert s["cost"] == 1.5 and s["added"] == 10 and s["removed"] == 2
         assert s["prs"] == [{"repo": "acme/api", "number": 7, "url": "https://github.com/acme/api/pull/7"}]
         assert s["files"] == ["/a/b.py"]
+        assert s["artifacts"] == ["https://claude.ai/code/artifact/abc-1"]  # published only, not listed
         assert s["file_keys"] == ["/a/b.py"]  # not inside a git checkout -> absolute path
         assert s["subagents"] == 1
         assert "widget" in s["text"] and "secret tool output" not in s["text"]
@@ -108,7 +114,7 @@ def test_all():
         assert "secret tool output" not in json.dumps(full["messages"])  # tool_result-only message dropped
         assert "skill text" not in json.dumps(full["messages"])  # isMeta (injected skill/context) hidden
         last = full["messages"][-1]
-        assert last["role"] == "assistant" and [t["name"] for t in last["tools"]] == ["Edit", "Read"]
+        assert last["role"] == "assistant" and [t["name"] for t in last["tools"]] == ["Edit", "Read", "Artifact", "Artifact"]
         assert full["subagents"] == [{"name": "Explore Jira", "messages": [{"role": "assistant", "ts": None, "text": "sub work", "tools": []}]}]
         assert idx.session("../../etc/passwd") is None
 

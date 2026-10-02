@@ -67,6 +67,11 @@ export default function Drawer({ id, mtime, colors, byId, prs, onClose, onSelect
               })}
             </div>
           )}
+          {s.artifacts.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {s.artifacts.map(u => <PRBadge key={u} state="unknown" href={u} title={u}>artifact · {u.split('/').pop()?.slice(0, 8)}</PRBadge>)}
+            </div>
+          )}
           <div className="mt-3 flex items-center gap-2 rounded-lg bg-zinc-100 p-2 dark:bg-zinc-900">
             <code className="min-w-0 flex-1 truncate text-[11px]" title={cmd}>{cmd}</code>
             <button onClick={() => navigator.clipboard.writeText(cmd).then(() => setCopied(true))}
