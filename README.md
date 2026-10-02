@@ -16,6 +16,7 @@ uv run sessions.py                                # http://127.0.0.1:8765
 Flags:
 - `--port 8765`
 - `--no-llm` (e.g. `uv run sessions.py --no-llm`): turns off summaries, digest and ask, so the app makes no `claude -p` calls
+- `--backup FILE` / `--restore FILE`: see [Keeping your history](#keeping-your-history)
 
 Requirements:
 - **Required:** [uv](https://docs.astral.sh/uv/) (it installs Python 3.12+ if needed; there are no Python dependencies) and Node 20+ (for building the UI).
@@ -23,6 +24,23 @@ Requirements:
   - `gh` (logged in) for PR status
   - iTerm for "Open in iTerm"
   - the `claude` CLI (logged in) for the AI features
+
+## Keeping your history
+
+By default Claude Code deletes session transcripts older than 30 days, and they then vanish from this app and from `claude --resume`. To keep them, raise `cleanupPeriodDays` in `~/.claude/settings.json`:
+
+```json
+{ "cleanupPeriodDays": 99999 }
+```
+
+To back up and restore every session (including subagent transcripts):
+
+```sh
+uv run sessions.py --backup ~/backups/claude-sessions.tar.gz
+uv run sessions.py --restore ~/backups/claude-sessions.tar.gz
+```
+
+Restore only adds files that are missing and never overwrites an existing transcript, so it's safe to run against a live history, and it also works on a new machine. Archive entries that would land outside `~/.claude/projects` are rejected. To back up on a schedule, run `--backup` from cron. Histories are small: about 100 sessions is a few hundred MB, and roughly a third of that once compressed.
 
 ## Web app
 

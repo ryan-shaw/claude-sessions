@@ -398,7 +398,31 @@ def test_http():
             srv.shutdown()
             os.environ["PATH"] = old_path
 
+def test_backup_restore():
+    import io, tarfile
+    with tempfile.TemporaryDirectory() as d:
+        root, out = Path(d) / "projects", Path(d) / "out"
+        path = write_fixture(root)
+        sessions.backup(Path(d) / "b.tgz", root)
+        path.unlink()
+        sub = path.parent / SID / "subagents" / "agent-abc.jsonl"
+        sub.write_text("newer")
+        assert sessions.restore(Path(d) / "b.tgz", root) == 1  # only the missing file
+        assert path.exists() and sub.read_text() == "newer"  # existing file not overwritten
+        assert sessions.restore(Path(d) / "b.tgz", out) == 4 and (out / path.parent.name / path.name).exists()  # fresh machine
+        evil = Path(d) / "evil.tgz"
+        with tarfile.open(evil, "w:gz") as t:
+            info = tarfile.TarInfo("../escaped"); info.size = 1
+            t.addfile(info, io.BytesIO(b"x"))
+        try:
+            sessions.restore(evil, root)
+            assert False, "path escape not rejected"
+        except tarfile.FilterError:
+            pass
+        assert not (Path(d) / "escaped").exists()
+
 if __name__ == "__main__":
+    test_backup_restore()
     test_all()
     test_file_keys()
     test_related()
