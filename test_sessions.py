@@ -176,6 +176,8 @@ def test_iterm_script():
     assert r'''write text "cd '/x/it'\"'\"'s \"q\"' && claude --resume abc"''' in s, s
 
 CLAUDE_OK = r'''printf '%s\n' "$@" > "$CLAUDE_ARGS"; cat > "$CLAUDE_IN"; echo '{"is_error":false,"result":"Fixed the login bug."}' '''
+CLAUDE_OK_EVENTS = r'''echo '[{"type":"system","subtype":"init"},{"type":"assistant"},{"type":"result","is_error":false,"result":"Fixed the login bug."}]' '''  # CLI 2.1.x prints the event stream
+CLAUDE_FAIL_EVENTS = r'''echo '[{"type":"system","subtype":"init"},{"type":"result","is_error":true,"result":"Not logged in"}]' '''
 CLAUDE_FAIL = r'''echo 'Not logged in' >&2; echo '{"is_error":true,"result":"Not logged in"}'; exit 1'''
 
 def test_summaries():
@@ -194,6 +196,15 @@ def test_summaries():
             for flag in ("-p", "--no-session-persistence", "--setting-sources", "--tools", "--strict-mcp-config"):  # strict: no MCP tools either
                 assert flag in args, flag
             assert args[args.index("--tools") + 1] == ""  # no tools: injected instructions have nothing to run
+            stub_bin(root, "claude", CLAUDE_OK_EVENTS)  # event-array output: reply is the "result" event
+            assert sessions.claude("hi", "sys") == "Fixed the login bug."
+            stub_bin(root, "claude", CLAUDE_FAIL_EVENTS)
+            try:
+                sessions.claude("hi", "sys")
+                raise AssertionError("expected RuntimeError")
+            except RuntimeError as e:
+                assert "Not logged in" in str(e)
+            stub_bin(root, "claude", CLAUDE_OK)
 
             idx = sessions.Index(root)
             idx.refresh()
