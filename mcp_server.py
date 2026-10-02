@@ -50,9 +50,16 @@ def _utc(dt):
 
 
 def search_sessions(query, limit=10):
-    sm = _summaries()
-    hits = S.retrieve(str(query), _rows(), k=max(1, min(int(limit), 50)))
-    return [{**_brief(s, sm), "snippet": S.excerpts(s, str(query), 300)} for s in hits]
+    sm, rows = _summaries(), _rows()
+    k, q = max(1, min(int(limit), 50)), str(query).lower().strip()
+    # verbatim hits first: TF-IDF drops ids like "4242" (no token) and "ABC-123" (only "abc" survives)
+    ranked = S.retrieve(q, rows, k=len(rows))
+    exact = {s["id"]: s for s in _newest(rows) if q and (q in s["text"] or q in s["title"].lower())}
+    if len(exact) > k:  # a common word: keep only verbatim hits, but in TF-IDF order (unscored ones newest first)
+        exact = {**{s["id"]: s for s in ranked if s["id"] in exact}, **exact}
+    hits = list({**exact, **{s["id"]: s for s in ranked}}.values())[:k]
+    return [{**_brief(s, sm), "snippet": S.snippet(s, q, 150) if s["id"] in exact else S.excerpts(s, q, 300)}
+            for s in hits]
 
 
 def get_session(id, max_chars=20000):

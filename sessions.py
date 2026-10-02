@@ -219,6 +219,12 @@ def retrieve(q, summaries, k=8):
     return [s for _, _, s in sorted(scored, key=lambda x: (-x[0], x[1]))[:k]]
 
 
+def snippet(s, q, width=80):
+    """Text around the first verbatim occurrence of `q` (already lower-cased), else the title."""
+    i = s["text"].find(q)
+    return " ".join(s["text"][max(0, i - width):i + len(q) + width].split()) if i >= 0 else s["title"]
+
+
 def excerpts(s, q, budget=1500):
     """Up to `budget` chars of text around the question's terms."""
     out, used = [], 0
@@ -302,8 +308,7 @@ class Index:
             i = s["text"].find(q)
             if i < 0 and q not in s["title"].lower() and q not in s["cwd"].lower():
                 continue
-            snippet = " ".join(s["text"][max(0, i - 80):i + len(q) + 80].split()) if i >= 0 else s["title"]
-            out.append({"id": s["id"], "snippet": snippet})
+            out.append({"id": s["id"], "snippet": snippet(s, q)})
         return out
 
     def session(self, sid):

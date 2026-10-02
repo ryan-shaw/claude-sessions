@@ -80,7 +80,7 @@ claude mcp get claude-sessions    # should show ✔ Connected
 
 | Tool | What it returns |
 |---|---|
-| `search_sessions(query, limit=10)` | Best-matching sessions, with summaries and snippets |
+| `search_sessions(query, limit=10)` | Sessions containing the query verbatim first (newest first, or by TF-IDF score when there are more than `limit`), then the best TF-IDF matches, with summaries and snippets |
 | `get_session(id, max_chars=20000)` | Metadata, summary, files, related sessions, resume command and transcript text |
 | `sessions_for_file(path)` | Every session that edited a file (absolute path or `repo:path`) |
 | `recent_sessions(days=7, project?)` | Recent activity, optionally for one project and its subfolders |
