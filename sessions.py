@@ -9,6 +9,7 @@ import os
 import re
 import shlex
 import subprocess
+import tarfile
 import threading
 import time
 from collections import Counter
@@ -625,11 +626,32 @@ def make_server(index, port, prs=None, summaries=None):
     return srv
 
 
+def backup(dest, root=ROOT):
+    with tarfile.open(dest, "w:gz") as t:
+        t.add(root, arcname=".")
+
+
+def restore(src, root=ROOT):
+    """Extract only files missing from root; never overwrites a newer live transcript."""
+    root.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(src) as t:
+        new = [m for m in t.getmembers() if m.isfile() and not (root / m.name).exists()]
+        t.extractall(root, members=new, filter="data")  # "data" rejects absolute paths, .. and links out of root
+    return len(new)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--port", type=int, default=8765)
     ap.add_argument("--no-llm", action="store_true", help="disable summaries, digest and ask (no claude -p calls)")
+    ap.add_argument("--backup", metavar="FILE", help=f"write {ROOT} to a .tar.gz and exit")
+    ap.add_argument("--restore", metavar="FILE", help="add sessions missing from a backup, never overwriting, and exit")
     args = ap.parse_args()
+    if args.backup:
+        backup(args.backup)
+        return print(f"backed up {ROOT} -> {args.backup}")
+    if args.restore:
+        return print(f"restored {restore(args.restore)} files into {ROOT}")
     idx = Index()
     idx.refresh()
     srv = make_server(idx, args.port, summaries=None if args.no_llm else Summaries(idx))
