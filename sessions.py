@@ -17,8 +17,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
-ROOT = Path.home() / ".claude" / "projects"
-DEV = Path.home() / "Development"
+# env overrides let you point the app at another history (demos, tests)
+ROOT = Path(os.environ.get("CLAUDE_SESSIONS_ROOT", Path.home() / ".claude" / "projects"))
+DEV = Path(os.environ.get("CLAUDE_SESSIONS_DEV", Path.home() / "Development"))
 EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
 
 
@@ -425,8 +426,9 @@ class Summaries:
     """Background 1-2 sentence summaries of idle sessions, cached on disk by (id, mtime)."""
     IDLE = 600
 
-    def __init__(self, index, path=CACHE_DIR / "summaries.json"):
-        self.index, self.path = index, Path(path)
+    def __init__(self, index, path=None):
+        self.index = index
+        self.path = Path(path or os.environ.get("CLAUDE_SESSIONS_CACHE", CACHE_DIR / "summaries.json"))
         try:
             self.data = json.loads(self.path.read_text())
             if not isinstance(self.data, dict):

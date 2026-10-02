@@ -1,5 +1,7 @@
 # claude-sessions
 
+![Claude Sessions graph view: sessions grouped by folder, linked by shared files, PRs and related content](docs/screenshot.png)
+
 A local tool for browsing, searching and asking questions of every Claude Code session on your machine (`~/.claude/projects`), across all projects. It has two parts:
 - a web app
 - an MCP server, so any Claude Code session can query your history itself
@@ -104,6 +106,18 @@ Summaries come from the web app's cache, so run `sessions.py` at least once to f
 - The iTerm command is shell-quoted, then escaped for AppleScript.
 - Markdown never loads images. Links open in a new tab.
 
+## Configuration
+
+These environment variables point the app (and the MCP server) at a different history, which is useful for demos and tests:
+
+| Variable | Default |
+|---|---|
+| `CLAUDE_SESSIONS_ROOT` | `~/.claude/projects` |
+| `CLAUDE_SESSIONS_DEV` | `~/Development` (project names are relative to this) |
+| `CLAUDE_SESSIONS_CACHE` | `~/.cache/claude-sessions/summaries.json` |
+
+The screenshot above uses generated demo data.
+
 ## Development
 
 ```sh
@@ -123,3 +137,7 @@ cd web && npm test                  # graph/timeline/filter logic, markdown safe
 - Search and related sessions are linear TF-IDF scans. They're fine for hundreds of sessions; switch to SQLite FTS if it gets slow.
 - Only Claude Code's default worktree location (`.claude/worktrees/<n>`) is recognised once a worktree has been deleted.
 - PR status refreshes only when sessions change, or after the 10-minute cache expires.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
