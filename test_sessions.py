@@ -25,7 +25,7 @@ def write_fixture(root):
         {"type": "user", "cwd": "/Users/x/Development/acme/api", "gitBranch": "DD-1-fix", "timestamp": "2026-01-01T10:00:00Z",
          "message": {"content": "Fix the\nlogin  Bug please"}},
         {"type": "assistant", "gitBranch": "main", "timestamp": "2026-01-01T10:01:00Z",
-         "message": {"content": [{"type": "text", "text": "Looking at the Widget"},
+         "message": {"content": [{"type": "text", "text": "Looking at the Widget for ABC-123, see PR 4242"},
                                  {"type": "tool_use", "name": "Edit", "input": {"file_path": "/a/b.py"}},
                                  {"type": "tool_use", "name": "Read", "input": {"file_path": "/a/c.py"}}]}},
         {"type": "user", "timestamp": "2026-01-01T10:02:00Z",
@@ -269,6 +269,10 @@ def test_mcp():
     with tempfile.TemporaryDirectory() as d:
         root = Path(d)
         write_fixture(root)
+        for sid, day, text in [("r1", 5, "redis vacuum"), ("r2", 4, "redis redis redis"),  # newer than SID's session
+                               ("p1", 3, "postgres vacuum"), ("p2", 2, "postgres index")]:
+            (root / "-Users-x-Development-acme-api" / f"{sid}.jsonl").write_text(json.dumps(
+                {"type": "user", "cwd": "/Users/x/Development/acme/db", "timestamp": f"2026-02-0{day}T10:00:00Z", "message": {"content": text}}) + "\n")
         cache = root / "summaries.json"
         cache.write_text(json.dumps({SID: {"mtime": 0, "summary": "Fixed login."}}))
         env = {**os.environ, "CLAUDE_SESSIONS_ROOT": str(root), "CLAUDE_SESSIONS_CACHE": str(cache)}
@@ -287,12 +291,17 @@ def test_mcp():
             call(10, "get_session", {"bogus": 1}),
             {"jsonrpc": "2.0", "id": 11, "method": "nope/nope"},
             call(12, "no_such_tool", {}),
+            call(13, "search_sessions", {"query": "ABC-123"}),  # tokenises to "abc" only
+            call(14, "search_sessions", {"query": "4242"}),  # no tokens at all
+            call(15, "search_sessions", {"query": "4242", "limit": 1}),  # verbatim hit beats newer sessions
+            call(16, "search_sessions", {"query": "redis", "limit": 1}),  # more hits than limit: TF-IDF order, not newest
+            call(17, "search_sessions", {"query": "  "}),
         ]
         inp = "\n".join(json.dumps(m) for m in msgs) + "\nnot json\n"
         r = subprocess.run([sys.executable, str(Path(__file__).resolve().parent / "mcp_server.py")],
                            input=inp, capture_output=True, text=True, timeout=30, env=env)
         lines = r.stdout.splitlines()
-        assert len(lines) == 13, r.stdout + r.stderr  # 14 messages minus 1 notification
+        assert len(lines) == 18, r.stdout + r.stderr  # 19 messages minus 1 notification
         out = {m.get("id"): m for m in map(json.loads, lines)}
         text = lambda i: json.loads(out[i]["result"]["content"][0]["text"])
         assert out[1]["result"]["protocolVersion"] == "2025-06-18"
@@ -308,6 +317,11 @@ def test_mcp():
         assert out[9]["result"]["isError"] and out[10]["result"]["isError"] and out[12]["result"]["isError"]
         assert out[11]["error"]["code"] == -32601
         assert out[None]["error"]["code"] == -32700
+        for i, ident in ((13, "abc-123"), (14, "4242")):  # exact identifiers: found, snippet shows them
+            assert text(i) and text(i)[0]["id"] == SID and ident in text(i)[0]["snippet"], text(i)
+        assert [x["id"] for x in text(15)] == [SID]
+        assert [x["id"] for x in text(16)] == ["r2"], text(16)
+        assert text(17) == []
 
 def test_http():
     import threading, urllib.request, urllib.error, http.client
