@@ -404,6 +404,8 @@ def claude(prompt, system, model="haiku", timeout=90):
         d = json.loads(r.stdout)
     except ValueError:
         d = None
+    if isinstance(d, list):  # newer CLIs print the whole event stream; the reply is its "result" event
+        d = next((e for e in reversed(d) if isinstance(e, dict) and e.get("type") == "result"), None)
     if not isinstance(d, dict) or r.returncode != 0 or d.get("is_error"):
         msg = (d or {}).get("result") if isinstance(d, dict) else None
         raise RuntimeError(str(msg or r.stderr or r.stdout or "claude failed").strip()[:300])
