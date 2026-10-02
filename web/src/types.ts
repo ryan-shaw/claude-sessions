@@ -3,7 +3,7 @@ export type Session = {
   id: string; cwd: string; project: string; branches: string[]; title: string
   start: string | null; end: string | null; messages: number
   cost: number; added: number; removed: number
-  prs: PR[]; artifacts: string[]; files: string[]; subagents: number
+  prs: PR[]; artifacts: Artifact[]; files: string[]; subagents: number
   mtime: number; file_keys: string[]; related: { id: string; score: number }[]
   summary?: string | null
 }
@@ -15,3 +15,4 @@ export type Edge = { source: string; target: string; type: EdgeType; key?: strin
 export type PRState = 'open' | 'merged' | 'closed' | 'unknown'
 export type PRInfo = { state: PRState; title: string | null }
 export type Folder = { id: string; path: string; label: string; count: number; group: string | null }
+export type Artifact = { url: string; title: string; description: string }
