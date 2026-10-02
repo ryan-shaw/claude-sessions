@@ -4,7 +4,7 @@ import type { Session } from './types'
 
 const mk = (id: string, o: Partial<Session> = {}): Session => ({
   id, cwd: '/x', project: 'a', branches: [], title: id, start: '2026-01-01T00:00:00Z', end: '2026-01-01T01:00:00Z',
-  messages: 1, cost: 0, added: 0, removed: 0, prs: [], files: [], subagents: 0, mtime: 0, file_keys: [], related: [], ...o,
+  messages: 1, cost: 0, added: 0, removed: 0, prs: [], artifacts: [], files: [], subagents: 0, mtime: 0, file_keys: [], related: [], ...o,
 })
 const of = (es: ReturnType<typeof buildEdges>, t: string) => es.filter(e => e.type === t).map(e => `${e.source}-${e.target}`).sort()
 

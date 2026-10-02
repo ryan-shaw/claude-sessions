@@ -22,6 +22,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 ROOT = Path(os.environ.get("CLAUDE_SESSIONS_ROOT", Path.home() / ".claude" / "projects"))
 DEV = Path(os.environ.get("CLAUDE_SESSIONS_DEV", Path.home() / "Development"))
 EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
+ARTIFACT_URL = re.compile(r"https://claude\.ai/(?:code/)?artifact/[\w-]+")
 
 
 def _records(path):
@@ -97,7 +98,8 @@ def parse_session(path):
     s = {"id": path.stem, "cwd": None, "start": None, "end": None,
          "messages": 0, "cost": 0, "added": 0, "removed": 0}
     ai_title = first_prompt = None
-    branches, files, prs, texts = {}, {}, {}, []  # dicts as ordered sets
+    branches, files, prs, artifacts, texts = {}, {}, {}, {}, []  # dicts as ordered sets
+    publish_ids = set()  # Artifact tool_use ids that published (not read/list, which name other artifacts)
     for r in _records(path):
         t, ts = r.get("type"), r.get("timestamp")
         if isinstance(ts, str):
@@ -122,8 +124,19 @@ def parse_session(path):
                 texts += [x for x in tx if not x.lstrip().startswith("<")]
             if t == "user" and first_prompt is None and not r.get("isMeta"):
                 first_prompt = next((x for x in tx if x.strip() and not x.lstrip().startswith("<")), None)
+            if t == "user" and isinstance(content, list):
+                for b in content:
+                    if isinstance(b, dict) and b.get("type") == "tool_result" and b.get("tool_use_id") in publish_ids:
+                        for u in ARTIFACT_URL.findall(json.dumps(b.get("content"))):
+                            artifacts[u] = 1
             if t == "assistant" and isinstance(content, list):
                 for b in content:
+                    if isinstance(b, dict) and b.get("type") == "tool_use" and b.get("name") == "Artifact":
+                        inp = b.get("input") if isinstance(b.get("input"), dict) else {}
+                        if inp.get("action", "publish") == "publish" and not inp.get("asset"):
+                            publish_ids.add(b.get("id"))
+                            if ARTIFACT_URL.fullmatch(inp.get("url") or ""):
+                                artifacts[inp["url"]] = 1
                     if isinstance(b, dict) and b.get("type") == "tool_use" and b.get("name") in EDIT_TOOLS:
                         inp = b.get("input") if isinstance(b.get("input"), dict) else {}
                         fp = inp.get("file_path") or inp.get("notebook_path")
@@ -136,6 +149,7 @@ def parse_session(path):
     s["project"] = project_name(s["cwd"])
     s["title"] = ai_title or " ".join((first_prompt or "(untitled)").split())[:120]
     s["branches"], s["files"], s["prs"] = list(branches), list(files), list(prs.values())
+    s["artifacts"] = list(artifacts)
     s["file_keys"] = [file_key(f) for f in s["files"]]
     sub = path.parent / path.stem / "subagents"
     s["subagents"] = len(list(sub.glob("*.jsonl"))) if sub.is_dir() else 0

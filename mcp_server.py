@@ -38,6 +38,7 @@ def _rows():
 def _brief(s, sm):
     return {"id": s["id"], "title": s["title"], "project": s["project"], "cwd": s["cwd"], "start": s["start"],
             "end": s["end"], "summary": (sm.get(s["id"]) or {}).get("summary"), "prs": [p["url"] for p in s["prs"]],
+            "artifacts": s["artifacts"],
             "cost_usd": round(s["cost"], 2)}
 
 
