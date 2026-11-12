@@ -316,7 +316,7 @@ def test_mcp():
         assert out[1]["result"]["protocolVersion"] == "2025-06-18"
         assert "tools" in out[2]["result"]["capabilities"]
         assert out[3]["result"]["cacheScope"] == "private" and isinstance(out[3]["result"]["ttlMs"], int)  # 2026-07-28 schema
-        assert {t["name"] for t in out[3]["result"]["tools"]} == {"search_sessions", "get_session", "sessions_for_file", "recent_sessions", "session_digest"}
+        assert {t["name"] for t in out[3]["result"]["tools"]} == {"search_sessions", "get_session", "sessions_for_file", "recent_sessions", "session_digest", "live_sessions"}
         assert text(4)[0]["id"] == SID and text(4)[0]["summary"] == "Fixed login."
         g = text(5)
         assert "User: Fix the" in g["transcript"] and g["files"] == ["/a/b.py"] and "claude --resume" in g["resume"]
@@ -455,6 +455,190 @@ def test_backup_restore():
             pass
         assert not (Path(d) / "escaped").exists()
 
+AGENTS = [{"pid": 4242, "cwd": "/Users/x/Development/acme/api", "kind": "interactive", "startedAt": 1, "sessionId": SID,
+           "name": "api-fix", "status": "waiting", "waitingFor": "input needed", "state": "running"},
+          {"pid": 4343, "cwd": "/tmp", "kind": "interactive", "startedAt": 2, "sessionId": "no-transcript", "name": "other", "status": "idle"}]
+# fake claude: answers `agents --json` from $CLAUDE_AGENTS; fake ps: `-o tty=` prints $PS_TTY, `-o ppid=` prints $PS_PPID,
+# or $PS_MID first when set, so the session is two processes up
+CLAUDE_AGENTS = r"""if [ "$1" = agents ]; then cat > /dev/null; cat "$CLAUDE_AGENTS"; exit $?; fi; echo '{"is_error":false,"result":"x"}' """
+PS_STUB = r"""cat > /dev/null; case "$*" in *tty=*) [ -n "$PS_TTY" ] && echo "$PS_TTY" || exit 1;; *ppid=*) for last; do :; done; if [ -n "$PS_MID" ] && [ "$last" != "$PS_MID" ]; then echo "$PS_MID"; else echo "$PS_PPID"; fi;; esac"""
+
+def test_live():
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        stub_bin(root, "claude", CLAUDE_AGENTS)
+        stub_bin(root, "ps", PS_STUB)
+        old = os.environ["PATH"]
+        os.environ.update(PATH=f"{root}:{old}", CLAUDE_AGENTS=str(root / "agents.json"), PS_TTY="ttys002  ")
+        try:
+            (root / "agents.json").write_text(json.dumps(AGENTS))
+            assert sessions.live_agents() == AGENTS
+            for bad in ('{"not": "a list"}', "not json", json.dumps([1, "x", AGENTS[0]])):
+                (root / "agents.json").write_text(bad)
+                assert sessions.live_agents() == ([AGENTS[0]] if bad.startswith("[") else [])  # non-dict entries dropped
+            (root / "agents.json").unlink()  # cat fails -> non-zero exit
+            assert sessions.live_agents() == []
+            assert sessions.session_tty(4242) == "ttys002"
+            for none in ("??", "", "ttys002; rm -rf /", "/dev/ttys002"):
+                os.environ["PS_TTY"] = none
+                assert sessions.session_tty(4242) == "", none
+            assert sessions.session_tty("4242; echo") == ""  # pid must be an int
+        finally:
+            os.environ["PATH"] = old
+        os.environ["PATH"] = str(root / "empty")  # no claude, no ps on PATH
+        try:
+            assert sessions.live_agents() == [] and sessions.session_tty(4242) == ""
+        finally:
+            os.environ["PATH"] = old
+
+def _tail(d, recs, name="t.jsonl"):
+    p = Path(d) / name
+    p.write_text("\n".join(json.dumps(r) for r in recs) + "\n")
+    return sessions.tail_state(p, chunk=4096)
+
+def test_tail_state():
+    u = lambda ts, content: {"type": "user", "timestamp": ts, "message": {"content": content}}
+    a = lambda ts, *blocks: {"type": "assistant", "timestamp": ts, "message": {"content": list(blocks)}}
+    use = lambda i, name, inp=None: {"type": "tool_use", "id": i, "name": name, "input": inp or {}}
+    res = lambda i: {"type": "tool_result", "tool_use_id": i, "content": "ok"}
+    text = {"type": "text", "text": "done"}
+    noise = [{"type": "last-prompt"}, {"type": "custom-title"}, {"type": "bridge-session"}]
+    with tempfile.TemporaryDirectory() as d:
+        q = {"questions": [{"question": "Which wording for the PR body?"}]}
+        cases = {
+            "question": ([u("T1", "go"), a("T2", text), a("T3", use("q1", "AskUserQuestion", q))] + noise,
+                         ("T3", {"tool": "AskUserQuestion", "question": "Which wording for the PR body?"})),
+            "plan approval": ([u("T1", "go"), a("T2", use("p1", "ExitPlanMode"))], ("T2", {"tool": "ExitPlanMode", "question": None})),
+            "permission prompt": ([u("T1", "go"), a("T2", use("b1", "Bash", {"command": "rm x"}))], ("T2", {"tool": "Bash", "question": None})),
+            "parallel, one outstanding": ([u("T1", "go"), a("T2", use("r1", "Read"), use("b2", "Bash")), u("T3", [res("r1")])],
+                                          ("T3", {"tool": "Bash", "question": None})),
+            "finished turn": ([u("T1", "go"), a("T2", use("r1", "Read")), u("T3", [res("r1")]), a("T4", text)] + noise, ("T4", None)),
+            "old unanswered call before a new prompt": ([a("T1", use("x1", "Bash")), u("T2", "never mind"), a("T3", text)], ("T3", None)),
+            "interrupted": ([a("T1", use("x1", "Bash")), u("T2", "[Request interrupted by user]")], ("T2", None)),
+            "sidechain ignored": ([u("T1", "go"), a("T2", text), {**a("T9", use("s1", "Bash")), "isSidechain": True}], ("T2", None)),
+            "no messages": (noise, (None, None)),
+            "parallel, two outstanding": ([u("T1", "go"), a("T2", use("r1", "Read"), use("b2", "Bash"))], ("T2", {"tool": "Bash", "question": None})),
+            "list as an id": ([u("T1", "go"), a("T2", {"type": "tool_use", "id": ["x"], "name": "Bash", "input": {}}), u("T3", [{"type": "tool_result", "tool_use_id": {"y": 1}}])],
+                              ("T3", None)),
+            "big trailing record": ([u("T1", "go"), a("T2", use("q1", "AskUserQuestion", q)), {"type": "api-request-blob", "blob": "x" * 50_000}],
+                                    ("T2", {"tool": "AskUserQuestion", "question": "Which wording for the PR body?"})),
+            "blocks with no id": ([u("T1", "go"), a("T2", {"type": "tool_use", "name": "Edit", "input": {}}), u("T3", [{"type": "tool_result", "content": "x"}])], ("T3", None)),
+            "injected context after a tool call": ([u("T1", "go"), a("T2", use("b1", "Bash")), {**u("T3", "<system-reminder>x</system-reminder>"), "isMeta": True}],
+                                                   ("T3", {"tool": "Bash", "question": None})),
+            "malformed question input": ([u("T1", "go"), a("T2", use("q1", "AskUserQuestion", {"questions": "nope"}))],
+                                         ("T2", {"tool": "AskUserQuestion", "question": None})),
+        }
+        for name, (recs, (ts, pending)) in cases.items():
+            got = _tail(d, recs)
+            assert (got["lastMessageAt"], got["pending"]) == (ts, pending), name
+            assert got["contextTokens"] is None and got["lastTurnTokens"] is None, name  # these fixtures carry no usage
+            assert got["idleSince"] == ts and got["permissionMode"] is None, name  # no peer turns, no mode records
+        none = {"lastMessageAt": None, "pending": None, "contextTokens": None, "lastTurnTokens": None,
+                "idleSince": None, "permissionMode": None}
+        assert sessions.EMPTY_TAIL == none
+        (Path(d) / "empty.jsonl").write_text("")
+        assert sessions.tail_state(Path(d) / "empty.jsonl") == none
+        assert sessions.tail_state(Path(d) / "missing.jsonl") == none
+        # token usage: context size is the newest assistant call's input; the last turn sums each call once
+        def call(ts, mid, inp, read, write, out, *blocks):
+            return {"type": "assistant", "timestamp": ts, "message": {"id": mid, "content": list(blocks or [text]),
+                    "usage": {"input_tokens": inp, "cache_read_input_tokens": read, "cache_creation_input_tokens": write, "output_tokens": out}}}
+        woken = [u("T0", "old prompt"), call("T1", "m0", 9, 9000, 9, 9),
+                 u("T2", "status check"), call("T3", "m1", 4, 29488, 681662, 515, use("s1", "SendMessage")),
+                 call("T3", "m1", 4, 29488, 681662, 515),  # one API call split over two records
+                 u("T4", [res("s1")]), call("T5", "m2", 2, 711150, 747, 138)]
+        got = _tail(d, woken)
+        assert got["contextTokens"] == 2 + 711150 + 747
+        assert got["lastTurnTokens"] == {"input": 6, "cacheRead": 740638, "cacheWrite": 682409, "output": 653}
+        got = _tail(d, woken + [u("T6", "next prompt, no answer yet")])
+        assert got["contextTokens"] == 2 + 711150 + 747 and got["lastTurnTokens"] is None  # nothing since the last prompt
+        got = _tail(d, [u("T1", "go"), {"type": "assistant", "timestamp": "T2", "message": {"content": [text], "usage": {"input_tokens": "x"}}}])
+        assert got["contextTokens"] is None and got["lastTurnTokens"] is None  # malformed usage is ignored
+        # turns: newer CLIs mark each turn's first record with turnPosition and say who started it. A message
+        # from another session is isMeta, but it starts a turn; idleSince ignores the turns peers started.
+        human = lambda ts, n: {**u(ts, "do the work"), "turnPosition": {"promptIndex": n, "turnIndex": n}, "turnOrigin": "human"}
+        peer = lambda ts, n: {**u(ts, "Another Claude session sent a message: status?"), "isMeta": True,
+                              "turnPosition": {"promptIndex": n, "turnIndex": n}, "turnOrigin": "peer"}
+        work = [human("T1", 1), call("T2", "w1", 5, 100, 5, 50, use("b1", "Bash")), u("T3", [res("b1")]), call("T4", "w2", 5, 200, 5, 60)]
+        asked = work + [peer("T5", 2), call("T6", "p1", 4, 300, 700000, 500), peer("T7", 3), call("T8", "p2", 2, 700300, 10, 400)]
+        got = _tail(d, asked)
+        assert got["lastMessageAt"] == "T8" and got["idleSince"] == "T4"   # two status exchanges later, still idle since T4
+        assert got["lastTurnTokens"] == {"input": 2, "cacheRead": 700300, "cacheWrite": 10, "output": 400}  # the last wake only
+        assert got["pending"] is None and got["contextTokens"] == 2 + 700300 + 10
+        got = _tail(d, work)
+        assert got["idleSince"] == "T4" and got["lastTurnTokens"] == {"input": 10, "cacheRead": 300, "cacheWrite": 10, "output": 110}
+        far = work + [{"type": "api-request-blob", "blob": "x" * 20_000}, peer("T5", 2), call("T6", "p1", 4, 300, 7, 500)]
+        got = _tail(d, far)  # the first 4096-byte window holds only the peer turn: keep widening for the real one
+        assert got["lastMessageAt"] == "T6" and got["idleSince"] == "T4"
+        got = _tail(d, [human("T1", 1), {"type": "assistant", "timestamp": "T2", "message": {"content": [text], "usage": {}}}])
+        assert got["contextTokens"] is None  # an empty or all-zero usage block is not a context size
+        got = _tail(d, [human("T1", 1), call("T2", "z", 0, 0, 0, 0)])
+        assert got["contextTokens"] is None
+        got = _tail(d, [peer("T1", 1), call("T2", "p1", 1, 1, 1, 1)])
+        assert got["idleSince"] == "T2"  # nothing but peer turns: fall back to the last message
+        got = _tail(d, asked + [{"type": "permission-mode", "permissionMode": "default"}, {"type": "permission-mode", "permissionMode": "auto"}])
+        assert got["permissionMode"] == "auto"  # the newest record wins
+        got = _tail(d, [{**human("T1", 1), "permissionMode": "acceptEdits"}, call("T2", "w1", 1, 1, 1, 1)])
+        assert got["permissionMode"] == "acceptEdits"  # user records carry it too
+
+def test_mcp_live():
+    import subprocess, sys
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        write_fixture(root)
+        stub_bin(root, "claude", CLAUDE_AGENTS)
+        stub_bin(root, "ps", PS_STUB)
+        (root / "agents.json").write_text(json.dumps(AGENTS + [{"pid": 4444, "sessionId": "*", "name": "evil", "status": "idle"}]))
+        cache = root / "summaries.json"
+        cache.write_text(json.dumps({SID: {"mtime": 0, "summary": "Fixed login."}}))
+        reg = root / "registry"  # Claude Code's per-process session files; only the Remote Control id is read
+        reg.mkdir()
+        (reg / "4242.json").write_text(json.dumps({"pid": 4242, "bridgeSessionId": "session_01AbC"}))
+        (reg / "4343.json").write_text(json.dumps({"pid": 4343, "bridgeSessionId": "../evil?x=1"}))
+        base = {**os.environ, "PATH": f"{root}:{os.environ['PATH']}", "CLAUDE_SESSIONS_ROOT": str(root),
+                "CLAUDE_SESSIONS_REGISTRY": str(reg),
+                "CLAUDE_SESSIONS_CACHE": str(cache), "CLAUDE_AGENTS": str(root / "agents.json"), "PS_TTY": "ttys002"}
+        def run(**env):
+            msg = {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "live_sessions", "arguments": {}}}
+            pings = "".join(json.dumps({"jsonrpc": "2.0", "id": i, "method": "ping"}) + "\n" for i in range(2, 5002))
+            r = subprocess.run([sys.executable, "mcp_server.py"], input=json.dumps(msg) + "\n" + pings,
+                               capture_output=True, text=True, env={**base, **env}, timeout=60, cwd=Path(__file__).parent)
+            replies = [json.loads(line) for line in r.stdout.splitlines()]
+            # ~200 KB of requests, more than the server reads ahead: the CLI and ps must not eat the rest
+            assert [x["id"] for x in replies] == list(range(1, 5002)), len(replies)
+            res = replies[0]["result"]
+            assert not res.get("isError"), res
+            return json.loads(res["content"][0]["text"])
+        rows = run(PS_PPID="4242", PS_MID="7001")  # the session is the server's grandparent
+        assert [r["name"] for r in rows] == ["api-fix", "other", "evil"]
+        assert set(rows[0]) == {"name", "sessionId", "cwd", "kind", "status", "waitingFor", "tty", "self", "lastMessageAt", "pending", "contextTokens", "lastTurnTokens", "idleSince", "permissionMode", "summary", "url", "state"}
+        fix = rows[0]
+        assert fix["self"] is True and fix["tty"] == "ttys002" and fix["summary"] == "Fixed login."
+        assert fix["status"] == "waiting" and fix["waitingFor"] == "input needed"
+        assert fix["lastMessageAt"] == "2026-01-01T10:02:20Z" and fix["pending"] is None  # t1/t2 answered; blocks with no id are ignored
+        other = rows[1]
+        assert other["self"] is False and other["waitingFor"] is None and other["summary"] is None
+        assert other["lastMessageAt"] is None and other["pending"] is None  # running, no transcript
+        assert other["contextTokens"] is None and other["lastTurnTokens"] is None
+        assert fix["idleSince"] == "2026-01-01T10:02:20Z" and other["idleSince"] is None and other["permissionMode"] is None
+        assert fix["state"] == "running" and other["state"] is None
+        assert fix["url"] == "https://claude.ai/code/session_01AbC"
+        assert other["url"] is None and rows[2]["url"] is None  # an id that is not session_<word> / no registry file
+        assert rows[2]["lastMessageAt"] is None  # a sessionId that is not [\w-]+ is never used in a glob
+        assert rows[2]["sessionId"] is None  # and is not handed on to a caller that might put it in a command
+        assert all(r["self"] is False for r in run(PS_PPID="1"))  # no listed pid among the ancestors
+        (root / "-Users-x-Development-acme-api" / f"{SID}.jsonl").write_text('{"type": "assistant", "timestamp": 5, "message": {"content": 7}}\n')
+        odd = run(PS_PPID="1")  # a transcript with the wrong shapes: every row still comes back
+        assert [r["name"] for r in odd] == ["api-fix", "other", "evil"] and odd[0]["lastMessageAt"] is None
+        assert run(PS_PPID="1", CLAUDE_AGENTS=str(root / "missing")) == []
+    import mcp_server  # a reader that raises costs one session its details, never the whole listing
+    real = sessions.tail_state
+    sessions.tail_state = lambda path: None + 1
+    try:
+        assert mcp_server._tail("x") == sessions.EMPTY_TAIL
+    finally:
+        sessions.tail_state = real
+
 if __name__ == "__main__":
     test_backup_restore()
     test_all()
@@ -466,4 +650,7 @@ if __name__ == "__main__":
     test_retrieve()
     test_mcp()
     test_http()
+    test_live()
+    test_tail_state()
+    test_mcp_live()
     print("ok")

@@ -176,6 +176,114 @@ def read_transcript(path):
     return out
 
 
+def _question(inp):
+    q = inp.get("questions") if isinstance(inp, dict) else None
+    q = q[0].get("question") if isinstance(q, list) and q and isinstance(q[0], dict) else None
+    return q if isinstance(q, str) else None
+
+
+USAGE = {"input": "input_tokens", "cacheRead": "cache_read_input_tokens", "cacheWrite": "cache_creation_input_tokens",
+         "output": "output_tokens"}
+
+
+def _usage(r):
+    """One assistant record's token counts, or None when it carries none it can trust."""
+    m = r.get("message")
+    u = m.get("usage") if isinstance(m, dict) else None
+    if not isinstance(u, dict):
+        return None
+    out = {k: u.get(src, 0) for k, src in USAGE.items()}
+    if not all(type(v) is int for v in out.values()):
+        return None
+    return out if out["input"] + out["cacheRead"] + out["cacheWrite"] else None  # an error record sends nothing
+
+
+EMPTY_TAIL = {"lastMessageAt": None, "pending": None, "contextTokens": None, "lastTurnTokens": None,
+              "idleSince": None, "permissionMode": None}
+
+
+def _starts_turn(r, content, blocks):
+    """Newer CLIs mark the first record of a turn. Older ones don't, so there a prompt is any user record
+    that is not injected context (isMeta) and holds something other than tool results."""
+    if r["type"] != "user":
+        return False
+    if r.get("turnPosition"):
+        return True
+    return not r.get("isMeta") and (isinstance(content, str) or any(b.get("type") != "tool_result" for b in blocks))
+
+
+def tail_state(path, chunk=1 << 20):
+    """Where a session stopped, read from the end of its transcript:
+    - lastMessageAt: the time of its last message
+    - pending: the tool call it has not had a result for (an open prompt, a running tool, or a call cut short)
+    - contextTokens: the size of its context
+    - lastTurnTokens: what its last turn used
+    - idleSince: the time of its last message that was not part of a turn another session started
+    - permissionMode: the permission mode it last recorded"""
+    state = dict(EMPTY_TAIL)
+    try:
+        with open(path, "rb") as f:
+            size = f.seek(0, 2)
+            while True:
+                start = max(0, size - chunk)
+                f.seek(start)
+                lines = f.read().split(b"\n")
+                if start:
+                    lines = lines[1:]  # the read began mid-line
+                last, results, turns, stopped = None, set(), [], False
+                context, spent, seen, mode = None, None, set(), None
+                idle, turn_newest = None, None
+                for raw in reversed(lines):
+                    try:
+                        r = json.loads(raw)
+                    except ValueError:
+                        continue
+                    if not isinstance(r, dict):
+                        continue
+                    if mode is None and isinstance(r.get("permissionMode"), str):
+                        mode = r["permissionMode"]
+                    if r.get("type") not in ("user", "assistant") or r.get("isSidechain"):
+                        continue
+                    u = _usage(r) if r["type"] == "assistant" else None
+                    if u and context is None:
+                        context = u["input"] + u["cacheRead"] + u["cacheWrite"]  # what the newest call was sent
+                    content = _content(r)
+                    blocks = [b for b in content if isinstance(b, dict)] if isinstance(content, list) else []
+                    starts = _starts_turn(r, content, blocks)
+                    if not stopped:  # still inside the newest turn
+                        last = last or r.get("timestamp")
+                        if r["type"] == "assistant":
+                            turns.append([b for b in blocks if b.get("type") == "tool_use" and isinstance(b.get("id"), str)])
+                            mid = r["message"].get("id") if u else None
+                            mid = mid if isinstance(mid, str) else None
+                            if u and (mid is None or mid not in seen):  # one API call can span several records
+                                seen.add(mid)
+                                spent = {k: (spent or {}).get(k, 0) + v for k, v in u.items()}
+                        else:
+                            results.update(b["tool_use_id"] for b in blocks
+                                           if b.get("type") == "tool_result" and isinstance(b.get("tool_use_id"), str))
+                        stopped = starts  # nothing before a turn's first record can still be outstanding
+                    if idle is None:
+                        turn_newest = turn_newest or r.get("timestamp")
+                        if starts and r.get("turnOrigin") == "peer":
+                            turn_newest = None  # a turn another session started: look at the one before
+                        elif starts:
+                            idle = turn_newest
+                    if stopped and idle is not None and context is not None and mode is not None:
+                        break
+                if (stopped and idle is not None) or not start:
+                    break
+                chunk *= 2  # the turn began before this window
+    except OSError:
+        return state
+    open_calls = [b for turn in reversed(turns) for b in turn if b["id"] not in results]
+    if open_calls:
+        b = open_calls[-1]
+        state["pending"] = {"tool": b.get("name"), "question": _question(b.get("input")) if b.get("name") == "AskUserQuestion" else None}
+    state.update(lastMessageAt=last, contextTokens=context, lastTurnTokens=spent, idleSince=idle or last, permissionMode=mode)
+    return state
+
+
 def _public(s):
     return {k: v for k, v in s.items() if k != "text"}
 
@@ -407,6 +515,48 @@ def iterm_script(cwd, sid):
         f"  tell current session of current window to write text {_as_str(cmd)}",
         "end tell",
     ])
+
+
+def live_agents(timeout=10):
+    """Sessions running on this machine, as `claude agents --json` lists them. [] when the CLI can't say."""
+    try:
+        r = subprocess.run(["claude", "agents", "--json"], capture_output=True, text=True, timeout=timeout,
+                           stdin=subprocess.DEVNULL)  # never the MCP server's stdin: that carries its requests
+        d = json.loads(r.stdout) if r.returncode == 0 else None
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        return []
+    return [a for a in d if isinstance(a, dict)] if isinstance(d, list) else []
+
+
+TTY = re.compile(r"ttys\d+")
+
+
+def session_tty(pid):
+    """The terminal a running session is attached to ('ttys002'), or '' when it has none."""
+    if not isinstance(pid, int):
+        return ""
+    try:
+        r = subprocess.run(["ps", "-o", "tty=", "-p", str(pid)], capture_output=True, text=True, timeout=5,
+                           stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    tty = r.stdout.strip()
+    return tty if TTY.fullmatch(tty) else ""
+
+
+def session_url(pid):
+    """The claude.ai address of a running session that is connected through Remote Control, else None.
+    The id is not in `claude agents --json`; it comes from the CLI's own per-process file, so a change to
+    that file's layout just drops the link."""
+    registry = Path(os.environ.get("CLAUDE_SESSIONS_REGISTRY", Path.home() / ".claude" / "sessions"))
+    if not isinstance(pid, int):
+        return None
+    try:
+        d = json.loads((registry / f"{pid}.json").read_text())
+    except (OSError, ValueError):
+        return None
+    bid = d.get("bridgeSessionId") if isinstance(d, dict) else None
+    return f"https://claude.ai/code/{bid}" if isinstance(bid, str) and re.fullmatch(r"session_\w+", bid) else None
 
 
 CACHE_DIR = Path.home() / ".cache" / "claude-sessions"
