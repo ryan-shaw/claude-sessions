@@ -9,9 +9,17 @@ A local tool for browsing, searching and asking questions of every Claude Code s
 ## Quick start
 
 ```sh
-cd web && npm install && npm run build && cd ..   # first time, or after UI changes
-uv run sessions.py                                # http://127.0.0.1:8765
+./start.sh                                        # http://127.0.0.1:8765
 ```
+
+`start.sh` installs and builds the UI when it is missing or older than `web/src`, then runs `uv run sessions.py`, passing any flags through. To do it by hand:
+
+```sh
+cd web && npm install && npm run build && cd ..   # first time, or after UI changes
+uv run sessions.py
+```
+
+On macOS, `./macos/make-app.sh` builds `~/Applications/Claude Sessions.app` for the Dock. Clicking it starts the server if it isn't running, then opens the page. Server output goes to `~/Library/Logs/claude-sessions.log`. The app runs `start.sh` under your account's login shell to get your PATH. If your terminal uses a different shell, set `LAUNCH_SHELL`, for example `LAUNCH_SHELL=/opt/homebrew/bin/fish ./macos/make-app.sh`. Re-run the script after moving the repo.
 
 Flags:
 - `--port 8765`
