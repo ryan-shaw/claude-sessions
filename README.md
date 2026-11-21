@@ -12,14 +12,14 @@ A local tool for browsing, searching and asking questions of every Claude Code s
 ./start.sh                                        # http://127.0.0.1:8765
 ```
 
-`start.sh` installs and builds the UI when it is missing or older than `web/src`, then runs `uv run sessions.py`, passing any flags through. To do it by hand:
+`start.sh` runs `npm install` when `web/package.json` or `web/package-lock.json` changed since the last install, rebuilds the UI when it is missing or older than its sources, then runs `uv run sessions.py`, passing any flags through. To do it by hand:
 
 ```sh
 cd web && npm install && npm run build && cd ..   # first time, or after UI changes
 uv run sessions.py
 ```
 
-On macOS, `./macos/make-app.sh` builds `~/Applications/Claude Sessions.app` for the Dock. Clicking it starts the server if it isn't running, then opens the page. Server output goes to `~/Library/Logs/claude-sessions.log`. The app runs `start.sh` under your account's login shell to get your PATH. If your terminal uses a different shell, set `LAUNCH_SHELL`, for example `LAUNCH_SHELL=/opt/homebrew/bin/fish ./macos/make-app.sh`. Re-run the script after moving the repo.
+On macOS, `./macos/make-app.sh` builds `~/Applications/Claude Sessions.app` for the Dock. Clicking it starts the server if it isn't running, waits up to 5 minutes for it, then opens the page. If the server doesn't come up, it shows a dialog pointing to `~/Library/Logs/claude-sessions.log`, where server output goes. Set `PORT` to use another port, for example `PORT=9000 ./macos/make-app.sh`. The app runs `start.sh` under your account's login shell to get your PATH. If your terminal uses a different shell, set `LAUNCH_SHELL`, for example `LAUNCH_SHELL=/opt/homebrew/bin/fish ./macos/make-app.sh`. Re-run the script after moving the repo.
 
 Flags:
 - `--port 8765`
