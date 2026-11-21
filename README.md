@@ -114,6 +114,7 @@ claude mcp get claude-sessions    # should show ✔ Connected
 | `sessions_for_file(path)` | Every session that edited a file (absolute path or `repo:path`) |
 | `recent_sessions(days=7, project?)` | Recent activity, optionally for one project and its subfolders |
 | `session_digest(week_offset=0)` | One week's sessions grouped by top-level folder |
+| `live_sessions()` | Sessions running now: name, working directory, status (`idle`, `busy`, `waiting`), the open prompt or unfinished tool call, tty, last message time, idle-since time (ignoring turns other sessions started), permission mode, context size, the tokens its last turn used, its stored summary when there is one, and its claude.ai link when connected through Remote Control. Needs a Claude Code CLI with `claude agents --json`; returns an empty list without it |
 
 Every session result includes its PR URLs and the claude.ai artifacts it published (URL, title, description).
 
