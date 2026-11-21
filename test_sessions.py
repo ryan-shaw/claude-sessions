@@ -458,10 +458,12 @@ def test_backup_restore():
 AGENTS = [{"pid": 4242, "cwd": "/Users/x/Development/acme/api", "kind": "interactive", "startedAt": 1, "sessionId": SID,
            "name": "api-fix", "status": "waiting", "waitingFor": "input needed", "state": "running"},
           {"pid": 4343, "cwd": "/tmp", "kind": "interactive", "startedAt": 2, "sessionId": "no-transcript", "name": "other", "status": "idle"}]
-# fake claude: answers `agents --json` from $CLAUDE_AGENTS; fake ps: `-o tty=` prints $PS_TTY, `-o ppid=` prints $PS_PPID,
-# or $PS_MID first when set, so the session is two processes up
+# fake claude: answers `agents --json` from $CLAUDE_AGENTS; fake ps prints a pid/ppid/tty table: its caller's parent is
+# $PS_PPID, or $PS_MID whose parent is $PS_PPID, so the session is two processes up; session 4242 is on $PS_TTY
 CLAUDE_AGENTS = r"""if [ "$1" = agents ]; then cat > /dev/null; cat "$CLAUDE_AGENTS"; exit $?; fi; echo '{"is_error":false,"result":"x"}' """
-PS_STUB = r"""cat > /dev/null; case "$*" in *tty=*) [ -n "$PS_TTY" ] && echo "$PS_TTY" || exit 1;; *ppid=*) for last; do :; done; if [ -n "$PS_MID" ] && [ "$last" != "$PS_MID" ]; then echo "$PS_MID"; else echo "$PS_PPID"; fi;; esac"""
+PS_STUB = r"""cat > /dev/null; [ "$*" = "-A -o pid= -o ppid= -o tty=" ] || exit 1
+echo "  $PPID ${PS_MID:-${PS_PPID:-1}} ttys009"; [ -n "$PS_MID" ] && echo "$PS_MID $PS_PPID ??"
+echo "4242 1 $PS_TTY"; echo "4343 1 ??"; echo "garbage line"; echo "x 1 ttys001" """
 
 def test_live():
     with tempfile.TemporaryDirectory() as d:
@@ -478,16 +480,17 @@ def test_live():
                 assert sessions.live_agents() == ([AGENTS[0]] if bad.startswith("[") else [])  # non-dict entries dropped
             (root / "agents.json").unlink()  # cat fails -> non-zero exit
             assert sessions.live_agents() == []
-            assert sessions.session_tty(4242) == "ttys002"
-            for none in ("??", "", "ttys002; rm -rf /", "/dev/ttys002"):
+            procs = sessions.processes()
+            assert procs[4242] == (1, "ttys002") and procs[4343] == (1, "") and procs[os.getpid()][1] == "ttys009"
+            assert len(procs) == 3  # lines that aren't pid ppid tty are skipped
+            for none in ("??", "", "ttys002; rm -rf /", "/dev/ttys002", "pts/0"):
                 os.environ["PS_TTY"] = none
-                assert sessions.session_tty(4242) == "", none
-            assert sessions.session_tty("4242; echo") == ""  # pid must be an int
+                assert sessions.processes().get(4242, (1, ""))[1] == "", none
         finally:
             os.environ["PATH"] = old
         os.environ["PATH"] = str(root / "empty")  # no claude, no ps on PATH
         try:
-            assert sessions.live_agents() == [] and sessions.session_tty(4242) == ""
+            assert sessions.live_agents() == [] and sessions.processes() == {}
         finally:
             os.environ["PATH"] = old
 
@@ -580,6 +583,25 @@ def test_tail_state():
         assert got["permissionMode"] == "auto"  # the newest record wins
         got = _tail(d, [{**human("T1", 1), "permissionMode": "acceptEdits"}, call("T2", "w1", 1, 1, 1, 1)])
         assert got["permissionMode"] == "acceptEdits"  # user records carry it too
+        # with markers, an unmarked user record (a prompt typed while a tool runs, an interruption, a task
+        # notification) is part of the turn, not the start of one
+        typed = [human("T1", 1), a("T2", use("b1", "Bash")), u("T3", "also do X")]
+        got = _tail(d, typed)
+        assert got["pending"] == {"tool": "Bash", "question": None} and got["idleSince"] == "T3"
+        got = _tail(d, typed[1:])  # no markers at all: the old heuristic, so 'also do X' starts a turn
+        assert got["pending"] is None
+        # context size and mode further back than the turn's start: keep widening for them too
+        blob = {"type": "api-request-blob", "blob": "x" * 20_000}
+        got = _tail(d, [{"type": "permission-mode", "permissionMode": "plan"}, call("T0", "o", 1, 2, 3, 4), blob,
+                        human("T1", 1), a("T2", text)])
+        assert got["permissionMode"] == "plan" and got["contextTokens"] == 6 and got["idleSince"] == "T2"
+        # ...but only up to the cap: a transcript of nothing but peer turns stops there and falls back
+        p = Path(d) / "peers.jsonl"
+        p.write_text("\n".join(json.dumps(r) for r in [human("T0", 0), call("T0", "h", 1, 1, 1, 1)]
+                               + [x for i in range(1, 400) for x in (peer(f"T{i}", i), call(f"T{i}", f"p{i}", 1, 1, 1, 1))]) + "\n")
+        got = sessions.tail_state(p, chunk=4096, cap=16384)
+        assert got["idleSince"] == got["lastMessageAt"] == "T399"
+        assert sessions.tail_state(p, chunk=4096)["idleSince"] == "T0"  # under the default cap it is found
 
 def test_mcp_live():
     import subprocess, sys
@@ -631,6 +653,17 @@ def test_mcp_live():
         odd = run(PS_PPID="1")  # a transcript with the wrong shapes: every row still comes back
         assert [r["name"] for r in odd] == ["api-fix", "other", "evil"] and odd[0]["lastMessageAt"] is None
         assert run(PS_PPID="1", CLAUDE_AGENTS=str(root / "missing")) == []
+        # resumed from another folder: a stale copy elsewhere loses to the one being written
+        stale = root / "-Users-x-old" / f"{SID}.jsonl"
+        stale.parent.mkdir()
+        stale.write_text('{"type": "assistant", "timestamp": "2020-01-01T00:00:00Z", "message": {"content": []}}\n')
+        live = root / "-Users-x-Development-acme-api" / f"{SID}.jsonl"
+        live.write_text(json.dumps({"type": "assistant", "timestamp": "2026-02-02T00:00:00Z", "permissionMode": "x; rm -rf ~",
+                                    "message": {"content": [{"type": "tool_use", "id": "e", "name": "Bash $(x)", "input": {}}]}}) + "\n")
+        os.utime(stale, (1, 1))
+        fix = run(PS_PPID="1")[0]
+        assert fix["lastMessageAt"] == "2026-02-02T00:00:00Z"
+        assert fix["permissionMode"] is None and fix["pending"] == {"tool": None, "question": None}  # not plain words
     import mcp_server  # a reader that raises costs one session its details, never the whole listing
     real = sessions.tail_state
     sessions.tail_state = lambda path: None + 1

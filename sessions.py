@@ -202,24 +202,27 @@ EMPTY_TAIL = {"lastMessageAt": None, "pending": None, "contextTokens": None, "la
               "idleSince": None, "permissionMode": None}
 
 
-def _starts_turn(r, content, blocks):
-    """Newer CLIs mark the first record of a turn. Older ones don't, so there a prompt is any user record
-    that is not injected context (isMeta) and holds something other than tool results."""
+def _starts_turn(r, content, blocks, marked):
+    """Newer CLIs mark the first record of a turn, and also write unmarked user records mid-turn (interruptions,
+    task notifications), so in a transcript with markers only those count. Older CLIs mark nothing: there a
+    prompt is any user record that is not injected context (isMeta) and holds something other than tool results."""
     if r["type"] != "user":
         return False
-    if r.get("turnPosition"):
-        return True
+    if marked:
+        return bool(r.get("turnPosition"))
     return not r.get("isMeta") and (isinstance(content, str) or any(b.get("type") != "tool_result" for b in blocks))
 
 
-def tail_state(path, chunk=1 << 20):
+def tail_state(path, chunk=1 << 20, cap=8 << 20):
     """Where a session stopped, read from the end of its transcript:
     - lastMessageAt: the time of its last message
     - pending: the tool call it has not had a result for (an open prompt, a running tool, or a call cut short)
     - contextTokens: the size of its context
     - lastTurnTokens: what its last turn used
     - idleSince: the time of its last message that was not part of a turn another session started
-    - permissionMode: the permission mode it last recorded"""
+    - permissionMode: the permission mode it last recorded
+    The window doubles until the newest turn's start is in it, and, up to `cap` bytes, until the rest is too;
+    past the cap idleSince falls back to lastMessageAt."""
     state = dict(EMPTY_TAIL)
     try:
         with open(path, "rb") as f:
@@ -230,16 +233,19 @@ def tail_state(path, chunk=1 << 20):
                 lines = f.read().split(b"\n")
                 if start:
                     lines = lines[1:]  # the read began mid-line
-                last, results, turns, stopped = None, set(), [], False
-                context, spent, seen, mode = None, None, set(), None
-                idle, turn_newest = None, None
-                for raw in reversed(lines):
+                recs = []
+                for raw in lines:
                     try:
                         r = json.loads(raw)
                     except ValueError:
                         continue
-                    if not isinstance(r, dict):
-                        continue
+                    if isinstance(r, dict):
+                        recs.append(r)
+                marked = any(r.get("turnPosition") for r in recs)
+                last, results, turns, stopped = None, set(), [], False
+                context, spent, seen, mode = None, None, set(), None
+                idle, turn_newest = None, None
+                for r in reversed(recs):
                     if mode is None and isinstance(r.get("permissionMode"), str):
                         mode = r["permissionMode"]
                     if r.get("type") not in ("user", "assistant") or r.get("isSidechain"):
@@ -249,7 +255,7 @@ def tail_state(path, chunk=1 << 20):
                         context = u["input"] + u["cacheRead"] + u["cacheWrite"]  # what the newest call was sent
                     content = _content(r)
                     blocks = [b for b in content if isinstance(b, dict)] if isinstance(content, list) else []
-                    starts = _starts_turn(r, content, blocks)
+                    starts = _starts_turn(r, content, blocks, marked)
                     if not stopped:  # still inside the newest turn
                         last = last or r.get("timestamp")
                         if r["type"] == "assistant":
@@ -271,7 +277,7 @@ def tail_state(path, chunk=1 << 20):
                             idle = turn_newest
                     if stopped and idle is not None and context is not None and mode is not None:
                         break
-                if (stopped and idle is not None) or not start:
+                if not start or (stopped and (chunk >= cap or None not in (idle, context, mode))):
                     break
                 chunk *= 2  # the turn began before this window
     except OSError:
@@ -531,17 +537,20 @@ def live_agents(timeout=10):
 TTY = re.compile(r"ttys\d+")
 
 
-def session_tty(pid):
-    """The terminal a running session is attached to ('ttys002'), or '' when it has none."""
-    if not isinstance(pid, int):
-        return ""
+def processes():
+    """{pid: (ppid, tty)} for every process, from one `ps` call; {} when ps can't say. tty is the terminal in
+    macOS form ('ttys002'), or '' when there is none or it is in any other form."""
     try:
-        r = subprocess.run(["ps", "-o", "tty=", "-p", str(pid)], capture_output=True, text=True, timeout=5,
-                           stdin=subprocess.DEVNULL)
+        r = subprocess.run(["ps", "-A", "-o", "pid=", "-o", "ppid=", "-o", "tty="], capture_output=True, text=True,
+                           timeout=5, stdin=subprocess.DEVNULL)
     except (OSError, subprocess.TimeoutExpired):
-        return ""
-    tty = r.stdout.strip()
-    return tty if TTY.fullmatch(tty) else ""
+        return {}
+    out = {}
+    for line in r.stdout.splitlines():
+        f = line.split()
+        if len(f) == 3 and f[0].isdigit() and f[1].isdigit():
+            out[int(f[0])] = (int(f[1]), f[2] if TTY.fullmatch(f[2]) else "")
+    return out
 
 
 def session_url(pid):
