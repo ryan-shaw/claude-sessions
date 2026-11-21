@@ -96,6 +96,9 @@ def test_all():
         ids = [x["id"] for x in idx.sessions()]
         assert set(ids) == {SID, "nocwd"} and all("text" not in x for x in idx.sessions())
         assert all(x["related"] == [] for x in idx.sessions())  # too few docs to relate
+        hidden = sessions.Index(root, exclude=["nomatch", path.parent.name[:4] + "*"])
+        hidden.refresh()
+        assert hidden.by_id == {}
         # a change inside the 60s throttle window still gets related recomputed later, with no further writes
         idx._related_at = time.time()
         os.utime(path, (1, 2_000_000_001))

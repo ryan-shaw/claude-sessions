@@ -25,6 +25,7 @@ Flags:
 - `--port 8765`
 - `--no-llm` (e.g. `uv run sessions.py --no-llm`): turns off summaries, digest and ask, so the app makes no `claude -p` calls
 - `--backup FILE` / `--restore FILE`: see [Keeping your history](#keeping-your-history)
+- `CLAUDE_SESSIONS_EXCLUDE='*logo-tiles*,*scratch*'` (env): comma-separated globs on `~/.claude/projects` folder names to hide from the app and MCP server, e.g. bulk `claude -p` runs
 
 Requirements:
 - **Required:** [uv](https://docs.astral.sh/uv/) (it installs Python 3.12+ if needed; there are no Python dependencies) and Node 20+ (for building the UI).

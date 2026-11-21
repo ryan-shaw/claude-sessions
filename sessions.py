@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Browse Claude Code sessions: python3 sessions.py [--port 8765]"""
 import argparse
+import fnmatch
 import functools
 import json
 import math
@@ -20,6 +21,8 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 # env overrides let you point the app at another history (demos, tests)
 ROOT = Path(os.environ.get("CLAUDE_SESSIONS_ROOT", Path.home() / ".claude" / "projects"))
+# comma-separated globs on project folder names, e.g. "*logo-tiles*", hidden from the app and MCP server
+EXCLUDE = [g for g in os.environ.get("CLAUDE_SESSIONS_EXCLUDE", "").split(",") if g.strip()]
 DEV = Path(os.environ.get("CLAUDE_SESSIONS_DEV", Path.home() / "Development"))
 EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
 ARTIFACT_URL = re.compile(r"https://claude\.ai/(?:code/)?artifact/[\w-]+")
@@ -383,8 +386,9 @@ ISO = re.compile(r"^\d{4}-\d\d-\d\dT[\d:.]+Z$")
 
 
 class Index:
-    def __init__(self, root=ROOT):
+    def __init__(self, root=ROOT, exclude=EXCLUDE):
         self.root = Path(root)
+        self.exclude = [g.strip() for g in exclude]
         self.cache = {}  # path -> (mtime, summary | None)
         self.by_id = {}  # id -> (path, summary)
         self.lock = threading.Lock()
@@ -397,6 +401,8 @@ class Index:
         with self.lock:
             seen, changed = set(), False
             for p in self.root.glob("*/*.jsonl"):
+                if any(fnmatch.fnmatch(p.parent.name, g) for g in self.exclude):
+                    continue
                 try:
                     m = p.stat().st_mtime
                 except OSError:
