@@ -588,6 +588,10 @@ def test_tail_state():
         typed = [human("T1", 1), a("T2", use("b1", "Bash")), u("T3", "also do X")]
         got = _tail(d, typed)
         assert got["pending"] == {"tool": "Bash", "question": None} and got["idleSince"] == "T3"
+        long = [human("T1", 1), {"type": "api-request-blob", "blob": "x" * 20_000}, call("T2", "w", 1, 1, 1, 1, use("b1", "Bash")),
+                {**u("T3", "<task-notification>"), "permissionMode": "auto"}]
+        got = _tail(d, long)  # the marker is outside the first window: widen to find it before trusting the heuristic
+        assert got["pending"] == {"tool": "Bash", "question": None} and got["idleSince"] == "T3"
         got = _tail(d, typed[1:])  # no markers at all: the old heuristic, so 'also do X' starts a turn
         assert got["pending"] is None
         # context size and mode further back than the turn's start: keep widening for them too

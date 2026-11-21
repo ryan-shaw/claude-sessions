@@ -221,8 +221,8 @@ def tail_state(path, chunk=1 << 20, cap=8 << 20):
     - lastTurnTokens: what its last turn used
     - idleSince: the time of its last message that was not part of a turn another session started
     - permissionMode: the permission mode it last recorded
-    The window doubles until the newest turn's start is in it, and, up to `cap` bytes, until the rest is too;
-    past the cap idleSince falls back to lastMessageAt."""
+    The window doubles until the newest turn's start is in it, and, up to `cap` bytes, until the rest and a
+    turn marker are too; past the cap idleSince falls back to lastMessageAt."""
     state = dict(EMPTY_TAIL)
     try:
         with open(path, "rb") as f:
@@ -277,7 +277,8 @@ def tail_state(path, chunk=1 << 20, cap=8 << 20):
                             idle = turn_newest
                     if stopped and idle is not None and context is not None and mode is not None:
                         break
-                if not start or (stopped and (chunk >= cap or None not in (idle, context, mode))):
+                # no marker in the window may just mean the turn's marker is further back, so widen to find out
+                if not start or (stopped and (chunk >= cap or (marked and None not in (idle, context, mode)))):
                     break
                 chunk *= 2  # the turn began before this window
     except OSError:
